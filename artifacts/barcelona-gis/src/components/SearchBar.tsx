@@ -16,18 +16,24 @@ export default function SearchBar({ features, onSelect }: SearchBarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!query.trim() || query.length < 2) {
+    if (!query.trim()) {
       setResults([]);
       setOpen(false);
       return;
     }
     const q = query.toLowerCase();
-    const found = features
-      .filter((f) => {
-        const name = f.properties.name?.toLowerCase() || "";
-        return name.includes(q);
-      })
-      .slice(0, 10);
+    // Prefix-first: results that START with the query come first,
+    // then results that contain it elsewhere, deduped.
+    const starts: GeoFeature[] = [];
+    const contains: GeoFeature[] = [];
+    for (const f of features) {
+      const name = f.properties.name?.toLowerCase() ?? "";
+      if (!name) continue;
+      if (name.startsWith(q)) starts.push(f);
+      else if (name.includes(q)) contains.push(f);
+      if (starts.length + contains.length >= 50) break; // early exit
+    }
+    const found = [...starts, ...contains].slice(0, 8);
     setResults(found);
     setOpen(found.length > 0);
   }, [query, features]);
