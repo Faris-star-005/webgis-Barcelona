@@ -1,6 +1,7 @@
 /**
- * Lightweight canvas-based heatmap layer for Leaflet.
- * Implements the simpleheat algorithm without any external dependency.
+ * Canvas-based heatmap layer for Leaflet.
+ * Positions the canvas correctly using containerPointToLayerPoint, matching
+ * the approach used by the official leaflet.heat plugin.
  */
 import L from "leaflet";
 
@@ -42,13 +43,13 @@ class HeatLayerImpl extends L.Layer {
 
   setLatLngs(points: HeatPoint[]) {
     this._points = points;
-    this._scheduleRedraw();
+    this._reset();
     return this;
   }
 
   setOptions(opts: HeatOptions) {
     Object.assign(this._opts, opts);
-    this._scheduleRedraw();
+    this._reset();
     return this;
   }
 
@@ -56,16 +57,14 @@ class HeatLayerImpl extends L.Layer {
     const pane = map.getPanes().overlayPane;
     const canvas = document.createElement("canvas");
     canvas.style.position = "absolute";
-    canvas.style.left = "0";
-    canvas.style.top = "0";
     canvas.style.pointerEvents = "none";
-    canvas.classList.add("leaflet-zoom-animated");
+    const zoomAnimated = map.options.zoomAnimation && L.Browser.any3d;
+    canvas.classList.add("leaflet-zoom-" + (zoomAnimated ? "animated" : "hide"));
     pane.appendChild(canvas);
     this._canvas = canvas;
-    this._resize();
-    map.on("moveend zoomend resize", this._redraw, this);
+    map.on("moveend", this._reset, this);
     map.on("zoomanim", this._onZoomAnim as unknown as L.LeafletEventHandlerFn, this);
-    this._redraw();
+    this._reset();
     return this;
   }
 
@@ -78,44 +77,54 @@ class HeatLayerImpl extends L.Layer {
       cancelAnimationFrame(this._frame);
       this._frame = null;
     }
-    map.off("moveend zoomend resize", this._redraw, this);
+    map.off("moveend", this._reset, this);
     map.off("zoomanim", this._onZoomAnim as unknown as L.LeafletEventHandlerFn, this);
     return this;
   }
 
+  // Called during animated zoom to scale/translate the canvas
   private _onZoomAnim = (ev: unknown) => {
     if (!this._canvas || !this._map) return;
     const e = ev as { center: L.LatLng; zoom: number };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const map = this._map as any;
-    const scale = map.getZoomScale(e.zoom);
-    const offset = map._getCenterOffset(e.center)._multiplyBy(-scale).subtract(map._getMapPanePos());
+    const m = this._map as any;
+    const scale = (this._map as L.Map).getZoomScale(e.zoom);
+    const offset = (m._getCenterOffset(e.center) as L.Point)
+      .multiplyBy(-scale)
+      .subtract(m._getMapPanePos() as L.Point);
     if (L.DomUtil.setTransform) {
-      L.DomUtil.setTransform(this._canvas!, offset as L.Point, scale);
+      L.DomUtil.setTransform(this._canvas, offset, scale);
     }
   };
 
-  private _resize() {
+  // Reposition canvas and redraw
+  private _reset = () => {
     if (!this._canvas || !this._map) return;
-    const size = this._map.getSize();
+    const map = this._map as L.Map;
+
+    // Align canvas top-left with the map container's top-left corner,
+    // accounting for Leaflet's pane offset (critical for correct positioning)
+    const topLeft = map.containerPointToLayerPoint([0, 0]);
+    L.DomUtil.setPosition(this._canvas, topLeft);
+
+    const size = map.getSize();
     this._canvas.width = size.x;
     this._canvas.height = size.y;
-  }
+
+    this._scheduleRedraw();
+  };
 
   private _scheduleRedraw() {
-    if (!this._map) return;
     if (this._frame !== null) cancelAnimationFrame(this._frame);
     this._frame = requestAnimationFrame(() => {
       this._frame = null;
-      this._redraw();
+      this._draw();
     });
   }
 
-  private _redraw = () => {
+  private _draw() {
     if (!this._canvas || !this._map) return;
     const map = this._map as L.Map;
-    this._resize();
-
     const ctx = this._canvas.getContext("2d");
     if (!ctx) return;
 
@@ -123,47 +132,51 @@ class HeatLayerImpl extends L.Layer {
     const h = this._canvas.height;
     ctx.clearRect(0, 0, w, h);
 
+    if (!this._points.length) return;
+
     const r = this._opts.radius;
     const blur = this._opts.blur;
     const max = this._opts.max;
+    const minOpacity = this._opts.minOpacity;
 
-    // Build circle stamp
+    // Pre-build circle stamp and gradient lookup once per draw
     const circle = this._buildCircle(r, blur);
+    const gradient = this._buildGradient();
 
-    // Project points to container coords
+    // Project latlngs → container pixels (container coords, but canvas is
+    // already positioned at containerPointToLayerPoint([0,0]) so these
+    // pixels map correctly onto our canvas)
     const mapped: Array<[number, number, number]> = [];
     for (const [lat, lng, intensity] of this._points) {
       const pt = map.latLngToContainerPoint([lat, lng]);
       mapped.push([pt.x, pt.y, intensity]);
     }
 
-    // Draw stamps at min opacity
-    ctx.globalAlpha = this._opts.minOpacity;
+    // Draw alpha stamps
     ctx.globalCompositeOperation = "source-over";
-
     for (const [x, y, intensity] of mapped) {
-      ctx.globalAlpha = Math.max(intensity / max, this._opts.minOpacity);
-      ctx.drawImage(circle, x - r, y - r);
+      const alpha = Math.max(intensity / max, minOpacity);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(circle, x - r - blur, y - r - blur);
     }
 
-    // Colorize
+    // Colorize via gradient palette
     const imageData = ctx.getImageData(0, 0, w, h);
-    this._colorize(imageData.data, this._buildGradient());
+    this._colorize(imageData.data, gradient);
     ctx.putImageData(imageData, 0, 0);
-  };
+  }
 
   private _buildCircle(r: number, blur: number): HTMLCanvasElement {
-    const d = (r + blur) * 2;
+    const size = (r + blur) * 2;
     const c = document.createElement("canvas");
-    c.width = c.height = d;
+    c.width = c.height = size;
     const ctx = c.getContext("2d")!;
-    ctx.shadowOffsetX = ctx.shadowOffsetY = d * 2;
-    ctx.shadowBlur = blur * 2;
-    ctx.shadowColor = "black";
-    ctx.beginPath();
-    ctx.arc(-d, -d, r, 0, Math.PI * 2, true);
-    ctx.closePath();
-    ctx.fill();
+    // Paint a radial gradient circle: opaque center → transparent edge
+    const grad = ctx.createRadialGradient(r + blur, r + blur, 0, r + blur, r + blur, r + blur);
+    grad.addColorStop(0, "rgba(0,0,0,1)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
     return c;
   }
 
@@ -185,16 +198,17 @@ class HeatLayerImpl extends L.Layer {
     for (let i = 3; i < data.length; i += 4) {
       const alpha = data[i];
       if (alpha) {
-        const idx = alpha * 4;
+        // Alpha encodes density; map to gradient color
+        const idx = Math.min(255, Math.floor(alpha)) * 4;
         data[i - 3] = gradient[idx];
         data[i - 2] = gradient[idx + 1];
         data[i - 1] = gradient[idx + 2];
-        data[i] = alpha;
+        // Keep alpha for minOpacity blending
       }
     }
   }
 }
 
-export function createHeatLayer(points: HeatPoint[], opts?: HeatOptions): HeatLayerImpl {
+export function createHeatLayer(points: HeatPoint[], opts?: HeatOptions): L.Layer {
   return new HeatLayerImpl(points, opts);
 }
