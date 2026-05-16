@@ -6,6 +6,7 @@ import type { GeoFeature, GeoFeatureCollection, LayerCategory } from "../types/g
 import {
   categorizeFeature,
   buildPopupContent,
+  buildTooltipContent,
   LAYER_CONFIGS,
   getLayerConfig,
 } from "../utils/mapUtils";
@@ -33,6 +34,9 @@ function radiusForZoom(z: number): number {
 
 const canvasRenderer = L.canvas({ padding: 0.5 });
 
+// Categories that get permanent labels when zoomed in close
+const IMPORTANT_CATS = new Set<LayerCategory>(["tourism", "hotels", "healthcare", "parks"]);
+
 function makeCircleMarker(
   lat: number,
   lng: number,
@@ -41,18 +45,32 @@ function makeCircleMarker(
   category: LayerCategory,
   radius: number,
 ) {
+  // Important POIs get a slightly larger, more prominent marker
+  const important = IMPORTANT_CATS.has(category);
   const cm = L.circleMarker([lat, lng], {
     renderer: canvasRenderer,
-    radius,
+    radius: important ? radius + 1 : radius,
     color: "#fff",
-    weight: 1.5,
+    weight: important ? 2 : 1.5,
     fillColor: color,
-    fillOpacity: 0.9,
+    fillOpacity: 0.92,
   });
+
   cm.bindPopup(buildPopupContent(props, category), {
     maxWidth: 300,
     className: "bcn-popup",
   });
+
+  // Hover tooltip — shows name + type instantly without clicking
+  if (props.name) {
+    cm.bindTooltip(buildTooltipContent(props, category), {
+      className: "bcn-tooltip-wrapper",
+      direction: "top",
+      offset: [0, -8],
+      opacity: 1,
+    });
+  }
+
   return cm;
 }
 

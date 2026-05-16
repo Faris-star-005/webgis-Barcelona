@@ -210,6 +210,82 @@
   border: 1px solid rgba(255, 255, 255, 0.6);
 }
 
+/* ── Hover tooltip ─────────────────────────────────────────────── */
+.bcn-tooltip-wrapper {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.bcn-tooltip-wrapper::before {
+  display: none !important;
+}
+
+.bcn-tooltip {
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.16), 0 1px 4px rgba(0,0,0,0.08);
+  overflow: hidden;
+  min-width: 140px;
+  max-width: 220px;
+  font-family: system-ui, -apple-system, sans-serif;
+  pointer-events: none;
+  border: 1px solid rgba(0,0,0,0.07);
+}
+
+.bcn-tt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+}
+
+.bcn-tt-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.bcn-tt-body {
+  min-width: 0;
+}
+
+.bcn-tt-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a2744;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+
+.bcn-tt-type {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 1px;
+  opacity: 0.85;
+}
+
+.bcn-tt-hours {
+  font-size: 10px;
+  color: #6b7280;
+  padding: 4px 10px 7px;
+  border-top: 1px solid #f3f4f6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Cluster icon overrides */
 .marker-cluster-small,
 .marker-cluster-medium,

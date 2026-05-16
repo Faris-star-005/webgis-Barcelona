@@ -167,3 +167,63 @@ export function buildPopupContent(props: FeatureProperties, category: LayerCateg
 export function formatLabel(value: string): string {
   return value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
+
+// Human-readable type labels for tooltip subtitles
+const TYPE_LABELS: Record<string, string> = {
+  restaurant: "Restoran", fast_food: "Fast Food", food_court: "Food Court",
+  cafe: "Kafe",
+  bar: "Bar", pub: "Pub", nightclub: "Nightclub", biergarten: "Beer Garden",
+  hotel: "Hotel", hostel: "Hostel", motel: "Motel", guest_house: "Guest House", apartment: "Apartemen",
+  museum: "Museum", gallery: "Galeri Seni", attraction: "Atraksi Wisata",
+  viewpoint: "Titik Pandang", artwork: "Karya Seni", theme_park: "Taman Hiburan",
+  theatre: "Teater", cinema: "Bioskop", arts_centre: "Pusat Seni",
+  bus_stop: "Halte Bus", station: "Stasiun", tram_stop: "Halte Tram",
+  subway_entrance: "Pintu Masuk Metro", taxi: "Taksi", ferry_terminal: "Terminal Ferry",
+  park: "Taman", garden: "Taman Bunga", picnic_site: "Area Piknik",
+  hospital: "Rumah Sakit", pharmacy: "Apotek", clinic: "Klinik",
+  doctors: "Dokter", dentist: "Dokter Gigi",
+};
+
+function resolveType(props: FeatureProperties): string {
+  const raw = String(
+    props.amenity || props.tourism || props.shop || props.railway || props.highway || ""
+  );
+  return TYPE_LABELS[raw] ?? formatLabel(raw);
+}
+
+export function buildTooltipContent(props: FeatureProperties, category: LayerCategory): string {
+  const cfg      = getLayerConfig(category);
+  const name     = props.name ? String(props.name) : "";
+  const typeLabel = resolveType(props);
+
+  // Extra detail line for important categories
+  let detail = "";
+  if (props.opening_hours) {
+    const hrs = String(props.opening_hours)
+      .replace(/Mo-Su/g, "Setiap hari")
+      .replace(/Mo-Fr/g, "Sen–Jum")
+      .split(";")[0]
+      .trim();
+    detail = `<div class="bcn-tt-hours">🕐 ${hrs}</div>`;
+  } else if (props.cuisine) {
+    detail = `<div class="bcn-tt-hours">🍴 ${formatLabel(String(props.cuisine))}</div>`;
+  } else if (props.stars) {
+    detail = `<div class="bcn-tt-hours">${"⭐".repeat(Math.min(parseInt(String(props.stars)), 5))}</div>`;
+  } else if (props.operator) {
+    detail = `<div class="bcn-tt-hours">🏢 ${String(props.operator)}</div>`;
+  } else if (props.network) {
+    detail = `<div class="bcn-tt-hours">🔗 ${String(props.network)}</div>`;
+  }
+
+  return `
+<div class="bcn-tooltip">
+  <div class="bcn-tt-header">
+    <span class="bcn-tt-icon" style="background:${cfg.color}20;color:${cfg.color}">${cfg.icon}</span>
+    <div class="bcn-tt-body">
+      <div class="bcn-tt-name">${name || typeLabel}</div>
+      <div class="bcn-tt-type" style="color:${cfg.color}">${typeLabel}</div>
+    </div>
+  </div>
+  ${detail}
+</div>`;
+}
