@@ -1,36 +1,46 @@
-# [Project name]
+# Barcelona WebGIS
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+An interactive WebGIS explorer for Barcelona, built with React + Leaflet. Visualizes 20,644 named POI locations from OpenStreetMap data including restaurants, cafes, hotels, tourist attractions, transport stops, shops, and more.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/barcelona-gis run dev` — run the WebGIS app
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Map: Leaflet.js with Canvas renderer (CircleMarker for performance)
+- UI: React + Vite + Tailwind CSS
+- Data: OpenStreetMap GeoJSON (Barcelona) — pre-filtered to 20,644 POI features
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/barcelona-gis/` — Main WebGIS React app
+- `artifacts/barcelona-gis/public/barcelona.geojson` — Pre-filtered POI GeoJSON (12.4MB)
+- `artifacts/barcelona-gis/src/components/BarcelonaMap.tsx` — Main map component
+- `artifacts/barcelona-gis/src/utils/mapUtils.ts` — Layer configs and popup builder
+- `attached_assets/barcelona_1778919288661.geojson` — Original full GeoJSON (188MB, 257k features)
+
+## Features
+
+- Loading screen with progress bar
+- 9 layer categories (restaurants, cafes, bars, hotels, tourism, transport, shops, parks, healthcare)
+- Layer control panel — toggle each category on/off
+- Search bar — search by location name with dropdown results
+- GPS button — locate user on the map with accuracy circle
+- Clickable popups with location info
+- Zoom in/out controls + reset view
+- Canvas-based rendering for performance (20k+ points)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Pre-filtered GeoJSON from 257k to 20.6k features server-side to reduce download size from 188MB to 12.4MB
+- Used Leaflet CircleMarker with L.canvas() renderer instead of DivIcon — renders 20k points efficiently on canvas vs DOM
+- All UI overlays are hidden during data loading to avoid interaction issues
+- GeoJSON categorization is done in-browser at runtime for flexibility
 
 ## User preferences
 
@@ -38,8 +48,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Pre-filter script: run `python3 scripts/filter-geojson.py` if you need to regenerate the filtered GeoJSON
+- The GeoJSON public file must be at `artifacts/barcelona-gis/public/barcelona.geojson` for Vite to serve it
+- Do NOT remove or rename the original GeoJSON in `attached_assets/`

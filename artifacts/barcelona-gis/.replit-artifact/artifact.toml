@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Barcelona WebGIS"
+version = "1.0.0"
+id = "artifacts/barcelona-gis"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22531
+
+[services.development]
+run = "pnpm --filter @workspace/barcelona-gis run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/barcelona-gis", "run", "build" ]
+publicDir = "artifacts/barcelona-gis/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22531"
+BASE_PATH = "/"
