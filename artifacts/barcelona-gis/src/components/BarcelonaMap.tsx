@@ -127,6 +127,9 @@ export default function BarcelonaMap() {
   // Basemap
   const [activeBasemap, setActiveBasemap] = useState<BasemapId>("streets");
 
+  // Ambient (time-of-day) mode
+  const [ambientMode, setAmbientMode] = useState(false);
+
   const [statusBar, setStatusBar] = useState("Barcelona WebGIS — Memuat...");
 
   // ── Map init ─────────────────────────────────────────────────────
@@ -207,12 +210,43 @@ export default function BarcelonaMap() {
     if (tileLayerRef.current) mapRef.current.removeLayer(tileLayerRef.current);
     const newTile = L.tileLayer(bm.url, { maxZoom: bm.maxZoom });
     newTile.addTo(mapRef.current);
-    // Ensure tiles are below everything
     newTile.setZIndex(0);
     tileLayerRef.current = newTile;
     setActiveBasemap(id);
     setShowBasemapPanel(false);
   }, []);
+
+  // ── Ambient (time-of-day) mode ────────────────────────────────────
+  function getAmbientBasemap(h: number): BasemapId {
+    if (h >= 6 && h < 9)  return "positron";   // 06–09  fajar
+    if (h >= 9 && h < 17) return "streets";    // 09–17  siang
+    if (h >= 17 && h < 20) return "positron";  // 17–20  senja emas
+    return "dark";                              // 20–06  malam
+  }
+
+  function ambientLabel(id: BasemapId): string {
+    if (id === "positron") return "🌅 Fajar / Senja";
+    if (id === "streets")  return "☀️ Siang";
+    if (id === "dark")     return "🌙 Malam";
+    return "";
+  }
+
+  useEffect(() => {
+    if (!ambientMode) return;
+
+    function applyAmbient() {
+      const h = new Date().getHours();
+      const target = getAmbientBasemap(h);
+      handleBasemapSelect(target);
+    }
+
+    // Apply immediately on enable
+    applyAmbient();
+
+    // Re-check every minute
+    const timer = setInterval(applyAmbient, 60_000);
+    return () => clearInterval(timer);
+  }, [ambientMode, handleBasemapSelect]);
 
   // ── Data load ─────────────────────────────────────────────────────
   async function doLoad(map: L.Map) {
@@ -809,6 +843,29 @@ export default function BarcelonaMap() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l3-9 4 18 3-9h4" />
               </svg>
             </SideBtn>
+
+            {/* Ambient (time-of-day) mode */}
+            <SideBtn
+              active={ambientMode}
+              onClick={() => setAmbientMode((v) => !v)}
+              title={ambientMode ? "Matikan mode waktu" : "Aktifkan mode waktu (ganti basemap otomatis)"}
+              gradient={(() => {
+                const h = new Date().getHours();
+                if (h >= 20 || h < 6)  return "linear-gradient(135deg,#1a1a2e,#4a4e69)"; // malam
+                if (h < 9 || h >= 17)  return "linear-gradient(135deg,#f97316,#fbbf24)"; // fajar/senja
+                return "linear-gradient(135deg,#0ea5e9,#38bdf8)";                         // siang
+              })()}
+              inactiveColor="#888"
+            >
+              <span className="text-lg leading-none select-none">
+                {(() => {
+                  const h = new Date().getHours();
+                  if (h >= 20 || h < 6) return "🌙";
+                  if (h < 9 || h >= 17) return "🌅";
+                  return "☀️";
+                })()}
+              </span>
+            </SideBtn>
           </div>
 
           {/* ── Route panel — left side, below top bar ────────────── */}
@@ -892,10 +949,23 @@ export default function BarcelonaMap() {
               <MusicPlayer />
             </div>
 
-            {/* Right: basemap + location label */}
+            {/* Right: ambient indicator + basemap + location */}
             <div className="flex items-center gap-3 shrink-0">
               {heatBtnActive && (
                 <span className="text-amber-400/80 text-xs font-medium">🔥 Heatmap</span>
+              )}
+              {ambientMode && (
+                <span
+                  className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                  style={{
+                    background: "rgba(255,255,255,0.1)",
+                    color: activeBasemap === "dark" ? "#a78bfa" : activeBasemap === "positron" ? "#fbbf24" : "#7dd3fc",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    animation: "bcn-pulse 3s ease infinite",
+                  }}
+                >
+                  {ambientLabel(activeBasemap)}
+                </span>
               )}
               <span className="text-white/30 text-xs">
                 {BASEMAPS.find((b) => b.id === activeBasemap)?.icon}{" "}
