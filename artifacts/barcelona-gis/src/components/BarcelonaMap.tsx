@@ -16,6 +16,7 @@ import LayerControl from "./LayerControl";
 import MapControls from "./MapControls";
 import RoutePanel from "./RoutePanel";
 import type { RoutePoint, RouteResult } from "./RoutePanel";
+import MusicPlayer from "./MusicPlayer";
 import HeatmapControl from "./HeatmapControl";
 import BasemapControl, { BASEMAPS } from "./BasemapControl";
 import type { BasemapId } from "./BasemapControl";
@@ -867,32 +868,40 @@ export default function BarcelonaMap() {
 
           {/* ── Status bar ────────────────────────────────────────── */}
           <div
-            className="absolute bottom-0 left-0 right-0 z-[1000] flex items-center justify-between px-4 py-1.5"
+            className="absolute bottom-0 left-0 right-0 z-[1000] flex items-center justify-between px-4 py-1.5 gap-3"
             style={{
-              background: "linear-gradient(90deg,rgba(26,39,68,0.93),rgba(15,52,96,0.93))",
+              background: "linear-gradient(90deg,rgba(26,39,68,0.95),rgba(15,52,96,0.95))",
               backdropFilter: "blur(8px)",
               pointerEvents: "none",
             }}
           >
-            <div className="flex items-center gap-2">
+            {/* Left: status dot + text */}
+            <div className="flex items-center gap-2 shrink-0">
               <div
-                className="w-1.5 h-1.5 rounded-full"
+                className="w-1.5 h-1.5 rounded-full shrink-0"
                 style={{
                   background: heatBtnActive ? "#f59e0b" : "#4ade80",
                   animation: "bcn-pulse 2s ease infinite",
                 }}
               />
-              <span className="text-white/70 text-xs">{statusBar}</span>
+              <span className="text-white/70 text-xs truncate max-w-xs">{statusBar}</span>
             </div>
-            <div className="flex items-center gap-3">
+
+            {/* Center: Music player */}
+            <div className="flex-1 flex justify-center">
+              <MusicPlayer />
+            </div>
+
+            {/* Right: basemap + location label */}
+            <div className="flex items-center gap-3 shrink-0">
               {heatBtnActive && (
-                <span className="text-amber-400/80 text-xs font-medium">🔥 Heatmap aktif</span>
+                <span className="text-amber-400/80 text-xs font-medium">🔥 Heatmap</span>
               )}
               <span className="text-white/30 text-xs">
                 {BASEMAPS.find((b) => b.id === activeBasemap)?.icon}{" "}
                 {BASEMAPS.find((b) => b.id === activeBasemap)?.label}
               </span>
-              <span className="text-white/30 text-xs">Barcelona, Catalunya</span>
+              <span className="text-white/30 text-xs hidden sm:inline">Barcelona, Catalunya</span>
             </div>
           </div>
         </>
