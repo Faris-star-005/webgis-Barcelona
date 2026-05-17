@@ -14,6 +14,8 @@ import LoadingScreen from "./LoadingScreen";
 import SearchBar from "./SearchBar";
 import LayerControl from "./LayerControl";
 import MapControls from "./MapControls";
+import RoutePanel from "./RoutePanel";
+import type { RoutePoint, RouteResult } from "./RoutePanel";
 import HeatmapControl from "./HeatmapControl";
 import BasemapControl, { BASEMAPS } from "./BasemapControl";
 import type { BasemapId } from "./BasemapControl";
@@ -88,6 +90,11 @@ export default function BarcelonaMap() {
   const gpsLastPosRef     = useRef<{ lat: number; lng: number } | null>(null);
   const gpsFollowingRef   = useRef(false);
 
+  // Routing
+  const routeLineRef      = useRef<L.Polyline | null>(null);
+  const routeMarkersRef   = useRef<L.Marker[]>([]);
+  const routePickModeRef  = useRef<"origin" | "dest" | null>(null);
+
   const [loadProgress, setLoadProgress] = useState({ progress: 0, status: "Memulai..." });
   const [loaded, setLoaded]             = useState(false);
   const [namedFeatures, setNamedFeatures] = useState<GeoFeature[]>([]);
@@ -96,6 +103,15 @@ export default function BarcelonaMap() {
     new Set(LAYER_CONFIGS.map((c) => c.id))
   );
   const [gpsMode, setGpsMode] = useState<"off" | "loading" | "following" | "active">("off");
+
+  // Routing state
+  const [showRoutePanel,  setShowRoutePanel]  = useState(false);
+  const [routeOrigin,     setRouteOrigin]     = useState<RoutePoint | null>(null);
+  const [routeDest,       setRouteDest]       = useState<RoutePoint | null>(null);
+  const [routeResult,     setRouteResult]     = useState<RouteResult | null>(null);
+  const [routeLoading,    setRouteLoading]    = useState(false);
+  const [routePickMode,   setRoutePickMode]   = useState<"origin" | "dest" | null>(null);
+  const [routeProfile,    setRouteProfile]    = useState<"driving" | "walking" | "cycling">("driving");
 
   // Panel visibility
   const [showLayerPanel, setShowLayerPanel]     = useState(true);
@@ -130,12 +146,27 @@ export default function BarcelonaMap() {
     L.control.attribution({ position: "bottomright", prefix: "" }).addTo(map);
     L.control.scale({ position: "bottomleft", metric: true, imperial: false }).addTo(map);
 
-    // When user drags while GPS is following → switch to "active" (dot stays, no auto-pan)
+    // When user drags while GPS is following → switch to "active"
     map.on("dragstart", () => {
       if (gpsFollowingRef.current) {
         gpsFollowingRef.current = false;
         setGpsMode("active");
       }
+    });
+
+    // Route pick-mode: capture clicks to set origin / destination
+    map.on("click", (e: L.LeafletMouseEvent) => {
+      if (!routePickModeRef.current) return;
+      const { lat, lng } = e.latlng;
+      const label = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      const pt: RoutePoint = { lat, lng, label };
+      if (routePickModeRef.current === "origin") {
+        setRouteOrigin(pt);
+      } else {
+        setRouteDest(pt);
+      }
+      routePickModeRef.current = null;
+      setRoutePickMode(null);
     });
 
     mapRef.current = map;
@@ -504,6 +535,136 @@ export default function BarcelonaMap() {
     }
   }
 
+  // ── Routing ───────────────────────────────────────────────────────
+
+  // Keep ref in sync so the map click handler always has fresh pickMode
+  useEffect(() => {
+    routePickModeRef.current = routePickMode;
+    // Change cursor to crosshair when picking
+    if (mapRef.current) {
+      const el = mapRef.current.getContainer();
+      el.style.cursor = routePickMode ? "crosshair" : "";
+    }
+  }, [routePickMode]);
+
+  function buildRouteMarkerIcon(type: "A" | "B") {
+    return L.divIcon({
+      html: `<div class="route-marker-${type === "A" ? "a" : "b"}">${type}</div>`,
+      className: "custom-div-icon",
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+  }
+
+  function placeRouteMarkers(orig: RoutePoint, dst: RoutePoint) {
+    const map = mapRef.current!;
+    routeMarkersRef.current.forEach((m) => m.remove());
+    routeMarkersRef.current = [
+      L.marker([orig.lat, orig.lng], { icon: buildRouteMarkerIcon("A"), zIndexOffset: 3000 })
+        .bindPopup(`<div style="padding:8px 12px;font-family:system-ui"><b>🚩 Asal</b><br><span style="color:#555;font-size:12px">${orig.label}</span></div>`)
+        .addTo(map),
+      L.marker([dst.lat, dst.lng], { icon: buildRouteMarkerIcon("B"), zIndexOffset: 3000 })
+        .bindPopup(`<div style="padding:8px 12px;font-family:system-ui"><b>🏁 Tujuan</b><br><span style="color:#555;font-size:12px">${dst.label}</span></div>`)
+        .addTo(map),
+    ];
+  }
+
+  function clearRoute() {
+    routeLineRef.current?.remove();
+    routeLineRef.current = null;
+    routeMarkersRef.current.forEach((m) => m.remove());
+    routeMarkersRef.current = [];
+    setRouteOrigin(null);
+    setRouteDest(null);
+    setRouteResult(null);
+    setRoutePickMode(null);
+    setStatusBar("Rute dihapus");
+  }
+
+  async function fetchRoute(orig: RoutePoint, dst: RoutePoint, profile: string) {
+    if (!mapRef.current) return;
+    setRouteLoading(true);
+    setRouteResult(null);
+    try {
+      const url =
+        `https://router.project-osrm.org/route/v1/${profile}/` +
+        `${orig.lng},${orig.lat};${dst.lng},${dst.lat}` +
+        `?overview=full&geometries=geojson&steps=true`;
+      const res = await fetch(url);
+      const data = (await res.json()) as {
+        code: string;
+        routes?: Array<{
+          distance: number;
+          duration: number;
+          geometry: { coordinates: [number, number][] };
+          legs: Array<{
+            steps: Array<{
+              name: string;
+              distance: number;
+              duration: number;
+              maneuver: { type: string; modifier?: string };
+            }>;
+          }>;
+        }>;
+      };
+      if (data.code !== "Ok" || !data.routes?.[0]) {
+        setStatusBar("Rute tidak ditemukan antara dua titik ini");
+        setRouteLoading(false);
+        return;
+      }
+      const route = data.routes[0];
+      // Draw polyline (OSRM returns [lng,lat], Leaflet needs [lat,lng])
+      const latlngs = route.geometry.coordinates.map(
+        ([lng, lat]) => [lat, lng] as [number, number]
+      );
+      routeLineRef.current?.remove();
+      // Draw border (white shadow) then the blue line on top
+      const border = L.polyline(latlngs, {
+        color: "white", weight: 9, opacity: 0.6, lineCap: "round", lineJoin: "round",
+      }).addTo(mapRef.current!);
+      const line = L.polyline(latlngs, {
+        color: "#4285f4", weight: 5, opacity: 0.92, lineCap: "round", lineJoin: "round",
+      }).addTo(mapRef.current!);
+      // Store both so we can remove them together
+      (line as unknown as { _bcnBorder: L.Polyline })._bcnBorder = border;
+      routeLineRef.current = line;
+
+      // Fit map to route
+      mapRef.current!.fitBounds(line.getBounds(), { padding: [80, 80], animate: true });
+
+      // Parse steps
+      const steps: RouteResult["steps"] = [];
+      for (const leg of route.legs) {
+        for (const step of leg.steps) {
+          steps.push({
+            name: step.name,
+            distance: step.distance,
+            duration: step.duration,
+            maneuver: step.maneuver.type,
+            modifier: step.maneuver.modifier,
+          });
+        }
+      }
+
+      setRouteResult({ distance: route.distance, duration: route.duration, steps });
+      const km = (route.distance / 1000).toFixed(1);
+      const min = Math.ceil(route.duration / 60);
+      setStatusBar(`Rute: ${km} km • ~${min} menit`);
+    } catch {
+      setStatusBar("Gagal mengambil rute. Periksa koneksi internet.");
+    }
+    setRouteLoading(false);
+  }
+
+  // Auto-fetch when both points + profile change
+  useEffect(() => {
+    if (routeOrigin && routeDest) {
+      placeRouteMarkers(routeOrigin, routeDest);
+      void fetchRoute(routeOrigin, routeDest, routeProfile);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeOrigin, routeDest, routeProfile]);
+
   // ── Render ────────────────────────────────────────────────────────
   const heatBtnActive = activeHeat !== null;
 
@@ -633,7 +794,47 @@ export default function BarcelonaMap() {
                 <line x1="6" y1="20" x2="6" y2="14" />
               </svg>
             </SideBtn>
+
+            {/* Route */}
+            <SideBtn
+              active={showRoutePanel}
+              onClick={() => setShowRoutePanel((v) => !v)}
+              title="Petunjuk Arah"
+              gradient="linear-gradient(135deg,#4285f4,#1a73e8)"
+              inactiveColor="#666"
+              dot={!!routeResult}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h4l3-9 4 18 3-9h4" />
+              </svg>
+            </SideBtn>
           </div>
+
+          {/* ── Route panel — left side, below top bar ────────────── */}
+          {showRoutePanel && (
+            <div
+              className="absolute left-4 z-[1000]"
+              style={{ top: 76, pointerEvents: "auto" }}
+            >
+              <RoutePanel
+                features={namedFeatures}
+                origin={routeOrigin}
+                dest={routeDest}
+                result={routeResult}
+                loading={routeLoading}
+                pickMode={routePickMode}
+                profile={routeProfile}
+                onOriginChange={(pt) => setRouteOrigin(pt)}
+                onDestChange={(pt) => setRouteDest(pt)}
+                onStartPickMode={(mode) => {
+                  setRoutePickMode((prev) => (prev === mode ? null : mode));
+                }}
+                onProfileChange={setRouteProfile}
+                onClear={clearRoute}
+                onClose={() => setShowRoutePanel(false)}
+              />
+            </div>
+          )}
 
           {/* ── Slide-out panels (bottom-right, above status bar) ─── */}
           <div
