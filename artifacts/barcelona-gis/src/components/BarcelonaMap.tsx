@@ -84,6 +84,9 @@ export default function BarcelonaMap() {
   const heatLayerRef      = useRef<L.Layer | null>(null);
   const gpsMarkerRef      = useRef<L.Marker | null>(null);
   const gpsCircleRef      = useRef<L.Circle | null>(null);
+  const gpsWatchIdRef     = useRef<number | null>(null);
+  const gpsLastPosRef     = useRef<{ lat: number; lng: number } | null>(null);
+  const gpsFollowingRef   = useRef(false);
 
   const [loadProgress, setLoadProgress] = useState({ progress: 0, status: "Memulai..." });
   const [loaded, setLoaded]             = useState(false);
@@ -92,8 +95,7 @@ export default function BarcelonaMap() {
   const [activeLayers, setActiveLayers] = useState<Set<LayerCategory>>(
     new Set(LAYER_CONFIGS.map((c) => c.id))
   );
-  const [gpsLoading, setGpsLoading]     = useState(false);
-  const [gpsActive, setGpsActive]       = useState(false);
+  const [gpsMode, setGpsMode] = useState<"off" | "loading" | "following" | "active">("off");
 
   // Panel visibility
   const [showLayerPanel, setShowLayerPanel]     = useState(true);
@@ -128,10 +130,22 @@ export default function BarcelonaMap() {
     L.control.attribution({ position: "bottomright", prefix: "" }).addTo(map);
     L.control.scale({ position: "bottomleft", metric: true, imperial: false }).addTo(map);
 
+    // When user drags while GPS is following → switch to "active" (dot stays, no auto-pan)
+    map.on("dragstart", () => {
+      if (gpsFollowingRef.current) {
+        gpsFollowingRef.current = false;
+        setGpsMode("active");
+      }
+    });
+
     mapRef.current = map;
     doLoad(map);
 
     return () => {
+      // Clean up live GPS tracking on unmount
+      if (gpsWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -362,50 +376,132 @@ export default function BarcelonaMap() {
     setStatusBar(`Navigasi ke: ${feature.properties.name ?? "Lokasi"} ${cfg?.icon ?? ""}`);
   }, []);
 
-  // ── GPS ───────────────────────────────────────────────────────────
+  // ── GPS — Google Maps style ───────────────────────────────────────
+  function buildGpsIcon() {
+    return L.divIcon({
+      html: `<div class="gps-dot-container"><div class="gps-dot-ring"></div><div class="gps-dot"></div></div>`,
+      className: "custom-div-icon",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+  }
+
+  function placeGpsDot(lat: number, lng: number, accuracy: number) {
+    const map = mapRef.current!;
+
+    // Accuracy circle — Google blue
+    if (gpsCircleRef.current) {
+      (gpsCircleRef.current as L.Circle).setLatLng([lat, lng]);
+      (gpsCircleRef.current as L.Circle).setRadius(accuracy);
+    } else {
+      gpsCircleRef.current = L.circle([lat, lng], {
+        radius: accuracy,
+        color: "#4285f4",
+        fillColor: "#4285f4",
+        fillOpacity: 0.12,
+        weight: 1,
+      }).addTo(map);
+    }
+
+    // Pulsing blue dot
+    if (gpsMarkerRef.current) {
+      gpsMarkerRef.current.setLatLng([lat, lng]);
+      gpsMarkerRef.current.setIcon(buildGpsIcon());
+    } else {
+      gpsMarkerRef.current = L.marker([lat, lng], {
+        icon: buildGpsIcon(),
+        zIndexOffset: 2000,
+      })
+        .bindPopup(
+          `<div style="padding:10px 14px;font-family:system-ui;min-width:180px">
+            <div style="font-weight:700;color:#1a2744;margin-bottom:6px;font-size:13px">📍 Lokasi Anda</div>
+            <div style="color:#555;font-size:12px">${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+            <div style="color:#4285f4;font-size:11px;margin-top:4px;font-weight:600">Akurasi: ±${Math.round(accuracy)} m</div>
+          </div>`,
+          { maxWidth: 240 }
+        )
+        .addTo(map);
+    }
+  }
+
+  function stopGpsWatch() {
+    if (gpsWatchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(gpsWatchIdRef.current);
+      gpsWatchIdRef.current = null;
+    }
+  }
+
+  function removeGpsDot() {
+    gpsMarkerRef.current?.remove();
+    gpsCircleRef.current?.remove();
+    gpsMarkerRef.current = null;
+    gpsCircleRef.current = null;
+    gpsLastPosRef.current = null;
+    gpsFollowingRef.current = false;
+  }
+
   function handleGPS() {
-    if (!mapRef.current) return;
-    if (!navigator.geolocation) { setStatusBar("Geolokasi tidak didukung browser Anda"); return; }
-    setGpsLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-        setGpsLoading(false);
-        setGpsActive(true);
-        gpsMarkerRef.current?.remove();
-        gpsCircleRef.current?.remove();
+    const map = mapRef.current;
+    if (!map) return;
+    if (!navigator.geolocation) {
+      setStatusBar("Geolokasi tidak didukung browser Anda");
+      return;
+    }
 
-        const icon = L.divIcon({
-          html: `<div style="width:16px;height:16px;background:#e85d3d;border:3px solid white;border-radius:50%;box-shadow:0 0 0 4px rgba(232,93,61,0.3)"></div>`,
-          className: "custom-div-icon gps-pulse",
-          iconSize: [16, 16],
-          iconAnchor: [8, 8],
-        });
+    // ── Off → start tracking ──────────────────────────────────────
+    if (gpsMode === "off") {
+      setGpsMode("loading");
+      gpsFollowingRef.current = true;
 
-        const marker = L.marker([lat, lng], { icon })
-          .bindPopup(
-            `<div style="padding:10px 14px;font-family:system-ui">
-              <div style="font-weight:700;color:#1a2744;margin-bottom:4px">📍 Lokasi Anda</div>
-              <div style="color:#666;font-size:12px">${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
-              <div style="color:#aaa;font-size:11px;margin-top:2px">Akurasi: ±${Math.round(accuracy)}m</div>
-            </div>`,
-            { maxWidth: 220 }
-          )
-          .addTo(mapRef.current!);
+      gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+          gpsLastPosRef.current = { lat, lng };
+          placeGpsDot(lat, lng, accuracy);
+          setStatusBar(`Lokasi: ${lat.toFixed(5)}, ${lng.toFixed(5)} (±${Math.round(accuracy)} m)`);
 
-        const circle = L.circle([lat, lng], {
-          radius: accuracy, color: "#e85d3d", fillColor: "#e85d3d", fillOpacity: 0.06, weight: 1.5,
-        }).addTo(mapRef.current!);
+          setGpsMode((prev) => {
+            if (prev === "loading") {
+              // First fix — zoom to location
+              map.setView([lat, lng], 17, { animate: true });
+              return "following";
+            }
+            if (gpsFollowingRef.current) {
+              // Subsequent fix while following — keep centered
+              map.panTo([lat, lng], { animate: true, duration: 0.5 });
+              return "following";
+            }
+            // User panned away → just update dot position
+            return "active";
+          });
+        },
+        (err) => {
+          setGpsMode("off");
+          removeGpsDot();
+          setStatusBar(`GPS gagal: ${err.message}`);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 4000 }
+      );
+      return;
+    }
 
-        gpsMarkerRef.current = marker;
-        gpsCircleRef.current = circle;
-        mapRef.current!.setView([lat, lng], 16, { animate: true });
-        marker.openPopup();
-        setStatusBar(`Lokasi: ${lat.toFixed(4)}, ${lng.toFixed(4)} (±${Math.round(accuracy)}m)`);
-      },
-      (err) => { setGpsLoading(false); setStatusBar(`GPS Error: ${err.message}`); },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    // ── Following → stop (tap again to turn off) ──────────────────
+    if (gpsMode === "following") {
+      stopGpsWatch();
+      removeGpsDot();
+      setGpsMode("off");
+      setStatusBar("GPS dimatikan");
+      return;
+    }
+
+    // ── Active (panned away) → re-center, resume following ───────
+    if (gpsMode === "active" && gpsLastPosRef.current) {
+      const { lat, lng } = gpsLastPosRef.current;
+      gpsFollowingRef.current = true;
+      map.setView([lat, lng], Math.max(map.getZoom(), 16), { animate: true });
+      setGpsMode("following");
+      setStatusBar("Mengikuti lokasi Anda...");
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────
@@ -477,8 +573,7 @@ export default function BarcelonaMap() {
                 mapRef.current?.setView(BARCELONA_CENTER, DEFAULT_ZOOM, { animate: true });
                 setStatusBar("Kembali ke tampilan Barcelona");
               }}
-              gpsLoading={gpsLoading}
-              gpsActive={gpsActive}
+              gpsMode={gpsMode}
             />
 
             {/* Basemap */}
