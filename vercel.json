@@ -1,0 +1,11 @@
+{
+  "buildCommand": "pnpm --filter @workspace/barcelona-gis run build",
+  "outputDirectory": "artifacts/barcelona-gis/dist/public",
+  "installCommand": "pnpm install",
+  "framework": null,
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "env": {
+    "BASE_PATH": "/",
+    "PORT": "3000"
+  }
+}
